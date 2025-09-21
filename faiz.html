@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dino Offline — Sprite Edition</title>
+  <style>
+    :root{
+      --bg:#f7f7f7;
+      --ground:#7a7a7a;
+      --dino:#222;
+      --ob:#2b2b2b;
+    }
+    html,body{height:100%;margin:0;background:linear-gradient(#e9f0ff, var(--bg));display:flex;align-items:center;justify-content:center}
+    .wrapper{width:min(900px,94vw);max-width:1100px;padding:18px;box-sizing:border-box}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    h1{font-size:18px;margin:0}
+    .info{font-size:13px;color:#333;opacity:.8}
+    .board{background:white;border-radius:8px;box-shadow:0 6px 24px rgba(20,40,80,.08);overflow:hidden;position:relative}
+    canvas{display:block;width:100%;height:380px;background:linear-gradient(#fff,#f0f7ff);touch-action:none}
+    .hud{position:absolute;left:12px;top:12px;font-weight:700}
+    .score{position:absolute;right:12px;top:12px;font-weight:700}
+    .footer{padding:10px 14px;font-size:13px;color:#444;display:flex;justify-content:space-between;align-items:center}
+    .controls{font-size:13px;color:#666}
+    .small{font-size:12px;color:#888}
+    @media (max-width:520px){
+      canvas{height:300px}
+      h1{font-size:16px}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header>
+      <h1>Dino Offline — Sprite Edition</h1>
+      <div class="info">Space / ↑ lompat, ↓ duck. Klik layar untuk mulai</div>
+    </header>
+
+    <div class="board">
+      <canvas id="gameCanvas" width="900" height="380"></canvas>
+      <div class="hud" id="hud">Kecepatan: 0</div>
+      <div class="score" id="score">Skor: 0 | High: 0</div>
+    </div>
+
+    <div class="footer">
+      <div class="controls">Sprite sederhana (SVG) embedded — offline</div>
+      <div class="small">Highscore disimpan di localStorage</div>
+    </div>
+  </div>
+
+<script>
+/*
+ Sprite Edition:
+ - Uses embedded SVG data URIs for dino (4-frame), bird (2-frame) and cactus (1-frame).
+ - Draws frames via canvas.drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh)
+*/
+
+// ---- Canvas & constants ----
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let W = canvas.width, H = canvas.height;
+const GROUND_Y = H - 60;
+const DINO_X = 80;
+const baseSpeed = 6;
+let speed = baseSpeed;
+let gameRunning = false, gameOver = false;
+let score = 0, highscore = Number(localStorage.getItem('dino_highscore') || 0);
+
+// DOM
+const scoreEl = document.getElementById('score');
+const hud = document.getElementById('hud');
+
+// ---- Sprite SVGs as strings ----
+const svgDino = `
+<svg xmlns='http://www.w3.org/2000/svg' width='176' height='48' viewBox='0 0 176 48'>
+  <!-- 4 frames, each 44x48 -->
+  <!-- frame 0 -->
+  <g transform='translate(0,0)'>
+    <rect x='6' y='6' width='32' height='28' rx='4' fill='#222' />
+    <rect x='34' y='26' width='8' height='4' rx='2' fill='#222' />
+    <rect x='0' y='34' width='12' height='6' rx='2' fill='#222' />
+  </g>
+  <!-- frame 1 (leg forward) -->
+  <g transform='translate(44,0)'>
+    <rect x='6' y='6' width='32' height='28' rx='4' fill='#222' />
+    <rect x='36' y='26' width='8' height='4' rx='2' fill='#222' />
+    <rect x='28' y='34' width='12' height='6' rx='2' fill='#222' />
+  </g>
+  <!-- frame 2 (neutral) -->
+  <g transform='translate(88,0)'>
+    <rect x='6' y='6' width='32' height='28' rx='4' fill='#222' />
+    <rect x='34' y='26' width='8' height='4' rx='2' fill='#222' />
+    <rect x='4' y='34' width='12' height='6' rx='2' fill='#222' />
+  </g>
+  <!-- frame 3 (leg back) -->
+  <g transform='translate(132,0)'>
+    <rect x='6' y='6' width='32' height='28' rx='4' fill='#222' />
+    <rect x='32' y='26' width='8' height='4' rx='2' fill='#222' />
+    <rect x='40' y='34' width='12' height='6' rx='2' fill='#222' />
+  </g>
+  <!-- Eye for all frames -->
+  <circle cx='36' cy='18' r='2' fill='#fff' />
+  <circle cx='80' cy='18' r='2' fill='#fff' />
+  <circle cx='124' cy='18' r='2' fill='#fff' />
+  <circle cx='168' cy='18' r='2' fill='#fff' />
+</svg>
+`;
+
+const svgBird = `
+<svg xmlns='http://www.w3.org/2000/svg' width='68' height='24' viewBox='0 0 68 24'>
+  <!-- 2 frames, each 34x24 -->
+  <g transform='translate(0,0)'>
+    <ellipse cx='14' cy='12' rx='12' ry='8' fill='#2b2b2b' />
+    <rect x='26' y='8' width='8' height='4' rx='2' fill='#2b2b2b' />
+    <path d='M6 8 L10 4 L14 8' fill='#2b2b2b' />
+  </g>
+  <g transform='translate(34,0)'>
+    <ellipse cx='14' cy='12' rx='12' ry='8' fill='#2b2b2b' />
+    <rect x='22' y='6' width='8' height='4' rx='2' fill='#2b2b2b' />
+    <path d='M6 12 L10 16 L14 12' fill='#2b2b2b' />
+  </g>
+</svg>
+`;
+
+const svgCactus = `
+<svg xmlns='http://www.w3.org/2000/svg' width='30' height='54' viewBox='0 0 30 54'>
+  <rect x='10' y='8' width='10' height='38' rx='4' fill='#2b2b2b'/>
+  <rect x='6' y='18' width='6' height='6' rx='3' fill='#2b2b2b'/>
+  <rect x='18' y='24' width='6' height='6' rx='3' fill='#2b2b2b'/>
+</svg>
+`;
+
+// encode as data URIs
+function svgToDataURI(svg){
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+const spriteDino = new Image();
+const spriteBird = new Image();
+const spriteCactus = new Image();
+let spritesLoaded = 0;
+[spriteDino, spriteBird, spriteCactus].forEach(img=>{
+  img.onload = () => { spritesLoaded++; };
+});
+
+// set src
+spriteDino.src = svgToDataURI(svgDino);
+spriteBird.src = svgToDataURI(svgBird);
+spriteCactus.src = svgToDataURI(svgCactus);
+
+// ---- Utility ----
+function rand(min, max){ return Math.random()*(max-min)+min; }
+function rectsCollide(a,b){
+  return !(a.x+a.w < b.x || a.x > b.x+b.w || a.y+a.h < b.y || a.y > b.y+b.h);
+}
+
+// ---- Player (dino) ----
+const dino = {
+  x: DINO_X, y: GROUND_Y - 48,
+  w: 44, h: 48,
+  vy: 0,
+  jumping: false,
+  ducking: false,
+  frameIdx: 0,
+  frameTimer: 0,
+  update(dt){
+    const GRAVITY = 0.8;
+    this.vy += GRAVITY;
+    this.y += this.vy;
+    if(this.y > GROUND_Y - this.h){
+      this.y = GROUND_Y - this.h;
+      this.vy = 0;
+      this.jumping = false;
+    }
+    if(this.ducking && !this.jumping){
+      this.h = 28;
+    } else {
+      this.h = 48;
+    }
+    // run animation when on ground
+    if(!this.jumping){
+      this.frameTimer += dt;
+      if(this.frameTimer > 80){ // change frame every 80ms
+        this.frameTimer = 0;
+        this.frameIdx = (this.frameIdx + 1) % 4;
+      }
+    } else {
+      // while jumping use frame 2 (index 2) for neutral
+      this.frameIdx = 2;
+    }
+  },
+  jump(){
+    if(!this.jumping){
+      this.vy = -14;
+      this.jumping = true;
+      this.ducking = false;
+    }
+  },
+  duck(toggle){
+    if(!this.jumping) this.ducking = toggle;
+    else if(toggle) this.vy = Math.min(this.vy, 6);
+  },
+  draw(){
+    // if sprite loaded, draw frame, else fallback rectangle
+    if(spriteDino.complete && spriteDino.naturalWidth){
+      const sx = this.frameIdx * 44;
+      const sy = 0;
+      const sw = 44, sh = 48;
+      ctx.drawImage(spriteDino, sx, sy, sw, sh, Math.round(this.x), Math.round(this.y), this.w, this.h);
+    } else {
+      ctx.fillStyle = '#222';
+      ctx.fillRect(this.x, this.y, this.w, this.h);
+    }
+  }
+};
+
+// ---- Obstacles ----
+class Obstacle {
+  constructor(type){
+    this.type = type || 'cactus';
+    if(this.type === 'cactus'){
+      this.w = 30;
+      this.h = 54;
+      this.y = GROUND_Y - this.h;
+      this.sprite = spriteCactus;
+    } else {
+      this.w = 34;
+      this.h = 24;
+      const alt = Math.random();
+      this.y = GROUND_Y - this.h - (alt < 0.5 ? 80 : 40);
+      this.sprite = spriteBird;
+      this.frameCount = 2;
+    }
+    this.x = W + rand(10, 200);
+  }
+  update(){
+    this.x -= speed;
+  }
+  draw(){
+    if(this.type === 'cactus'){
+      if(this.sprite.complete && this.sprite.naturalWidth){
+        ctx.drawImage(this.sprite, 0, 0, 30, 54, Math.round(this.x), Math.round(this.y), this.w, this.h);
+      } else {
+        ctx.fillStyle = '#2b2b2b';
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+      }
+    } else {
+      // bird: animate 2 frames based on time
+      const t = Date.now();
+      const frame = Math.floor((t/160) % 2); // 160ms toggle
+      if(this.sprite.complete && this.sprite.naturalWidth){
+        const sx = frame * 34;
+        ctx.drawImage(this.sprite, sx, 0, 34, 24, Math.round(this.x), Math.round(this.y), this.w, this.h);
+      } else {
+        ctx.fillStyle = '#2b2b2b';
+        ctx.fillRect(this.x, this.y, this.w, this.h);
+      }
+    }
+  }
+}
+
+// ---- Ground & clouds ----
+const ground = {
+  x:0, y:GROUND_Y, h:6,
+  update(){
+    this.x = (this.x - speed) % 40;
+  },
+  draw(){
+    ctx.save();
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ground').trim() || '#7a7a7a';
+    ctx.fillRect(0, this.y, W, this.h);
+    for(let i=-1;i<20;i++){
+      const gx = (i*40 + this.x);
+      ctx.fillRect(gx, this.y-4, 20, 4);
+    }
+    ctx.restore();
+  }
+};
+
+let obstacles = [];
+let clouds = [];
+function spawnObstacle(){
+  const pBird = Math.min(0.18 + (speed-baseSpeed)*0.02, 0.35);
+  const type = Math.random() < pBird ? 'bird' : 'cactus';
+  obstacles.push(new Obstacle(type));
+}
+function spawnCloud(){
+  clouds.push({ x: W + rand(10,200), y: rand(20,90), w: rand(40,120), speed: rand(0.3,1.2) });
+}
+
+// ---- Game loop ----
+let lastTime = 0;
+let spawnTimer = 80;
+function loop(t){
+  if(!lastTime) lastTime = t;
+  const dt = t - lastTime;
+  lastTime = t;
+
+  ctx.clearRect(0,0,W,H);
+
+  // clouds
+  ctx.save();
+  ctx.fillStyle = '#cfe8ff';
+  clouds.forEach(c=>{
+    c.x -= c.speed;
+    if(c.x + c.w < -40) c.x = W + rand(10,200);
+    ctx.beginPath();
+    ctx.ellipse(c.x, c.y, c.w*0.6, 18, 0, 0, Math.PI*2);
+    ctx.fill();
+  });
+  ctx.restore();
+
+  // update/draw dino
+  dino.update(dt);
+  dino.draw();
+
+  // spawn obstacles
+  spawnTimer -= Math.min(dt/16, 2);
+  if(spawnTimer <= 0){
+    spawnObstacle();
+    spawnTimer = rand(55, 120) - Math.min(score/50, 40);
+  }
+
+  for(let i=obstacles.length-1;i>=0;i--){
+    obstacles[i].update();
+    obstacles[i].draw();
+    if(obstacles[i].x + obstacles[i].w < -20) obstacles.splice(i,1);
+    else {
+      const ob = {x:obstacles[i].x, y:obstacles[i].y, w:obstacles[i].w, h:obstacles[i].h};
+      const playerHitbox = {x:dino.x+4, y:dino.y+2, w:dino.w-8, h:dino.h-4};
+      if(rectsCollide(ob, playerHitbox)){
+        endGame();
+      }
+    }
+  }
+
+  // ground
+  ground.update();
+  ground.draw();
+
+  // scoring & speed
+  if(gameRunning && !gameOver){
+    score += Math.floor(dt/16 * 0.4);
+    speed = baseSpeed + Math.floor(score/100) * 0.5;
+  }
+  hud.textContent = 'Kecepatan: ' + Math.round(speed*10)/10;
+  scoreEl.textContent = `Skor: ${Math.max(0,score)} | High: ${highscore}`;
+
+  if(gameOver){
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#fff';
+    ctx.font = '28px system-ui, Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', W/2, H/2 - 10);
+    ctx.font = '16px system-ui, Arial';
+    ctx.fillText('Tekan Space atau klik untuk restart', W/2, H/2 + 24);
+    ctx.restore();
+  }
+
+  if(gameRunning) requestAnimationFrame(loop);
+}
+
+// ---- Start / End / Reset ----
+function startGame(){
+  if(gameRunning && !gameOver) return;
+  gameRunning = true; gameOver = false;
+  obstacles = []; clouds = [];
+  score = 0; speed = baseSpeed; spawnTimer = 80;
+  dino.x = DINO_X; dino.y = GROUND_Y - 48; dino.vy = 0; dino.jumping = false; dino.ducking = false;
+  for(let i=0;i<5;i++) spawnCloud();
+  lastTime = 0;
+  // If sprites not loaded yet, wait a bit to ensure visuals load
+  const tryStart = () => {
+    if(spritesLoaded >= 3 || Date.now() - startAt > 1200){
+      requestAnimationFrame(loop);
+    } else {
+      setTimeout(tryStart, 80);
+    }
+  };
+  const startAt = Date.now();
+  tryStart();
+}
+
+function endGame(){
+  if(gameOver) return;
+  gameOver = true; gameRunning = false;
+  if(score > highscore){ highscore = score; localStorage.setItem('dino_highscore', highscore); }
+  requestAnimationFrame(loop);
+}
+
+// ---- Input ----
+window.addEventListener('keydown', (e)=>{
+  if(e.code === 'Space' || e.code === 'ArrowUp'){
+    e.preventDefault();
+    if(gameOver) startGame();
+    else startGame();
+    dino.jump();
+  } else if(e.code === 'ArrowDown'){
+    dino.duck(true);
+  }
+});
+window.addEventListener('keyup', (e)=>{
+  if(e.code === 'ArrowDown'){
+    dino.duck(false);
+  }
+});
+
+canvas.addEventListener('mousedown', (e)=>{
+  if(gameOver) startGame();
+  else { startGame(); dino.jump(); }
+});
+canvas.addEventListener('touchstart', (e)=>{
+  e.preventDefault();
+  if(gameOver) startGame();
+  else { startGame(); dino.jump(); }
+}, {passive:false});
+
+// init draw
+(function init(){
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0,0,W,H);
+  ground.draw();
+  dino.draw();
+  ctx.save();
+  ctx.fillStyle = '#222';
+  ctx.font = '18px system-ui, Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('Klik atau tekan Space untuk mulai', W/2, H/2);
+  ctx.restore();
+  scoreEl.textContent = `Skor: ${score} | High: ${highscore}`;
+})();
+</script>
+</body>
+</html>
